@@ -1,35 +1,34 @@
-//
-//  ContentView.swift
-//  iOS16-Live-Activities
-//
-//  Created by Ming on 28/7/2022.
-//
-
 import SwiftUI
 import ActivityKit
 
+struct Constants {
+     static let deliveryDuration: Double = 10 // in seconds
+ }
+
 struct ContentView: View {
+    
+    @State var text: String? = nil
+    @State var timer: Timer? = nil
     
     // MARK: - Layout
     var body: some View {
         NavigationView {
             ZStack {
                 bgImage
-                actionButtons
+                content
             }
             .onTapGesture {
                 showAllDeliveries()
             }
-            .navigationTitle("SwiftPizza 🍕")
+            .navigationTitle("La pizzeria 🍕")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
-                    Text("For Apple Developers").bold()
-                        .onTapGesture {
-                            startPizzaAd()
-                        }
+                    Text("Dev Café").bold()
                 }
             }
             .preferredColorScheme(.dark)
+        }.onAppear {
+            refreshTasksCounter()
         }
     }
     var bgImage: some View {
@@ -40,22 +39,29 @@ struct ContentView: View {
             ProgressView()
         }.ignoresSafeArea(.all)
     }
+    
+    var content: some View {
+        VStack {
+            Text(text ?? "Etat initial").padding(.top, 50)
+            Spacer()
+            actionButtons
+        }
+    }
+    
     var actionButtons: some View {
         VStack(spacing:0) {
-            Spacer()
-            
             HStack(spacing:0) {
                 Button(action: { startDeliveryPizza() }) {
                     HStack {
                         Spacer()
-                        Text("Start Ordering 👨🏻‍🍳").font(.headline)
+                        Text("Ajouter 👨🏻‍🍳").font(.headline)
                         Spacer()
                     }.frame(height: 60)
                 }.tint(.blue)
                 Button(action: { updateDeliveryPizza() }) {
                     HStack {
                         Spacer()
-                        Text("Update Order 🫠").font(.headline)
+                        Text("Mettre à jour 🫠").font(.headline)
                         Spacer()
                     }.frame(height: 60)
                 }.tint(.purple)
@@ -64,77 +70,99 @@ struct ContentView: View {
             Button(action: { stopDeliveryPizza() }) {
                 HStack {
                     Spacer()
-                    Text("Cancel Order 😞").font(.headline)
+                    Text("Annuler 😞").font(.headline)
                     Spacer()
                 }.frame(height: 60)
-                .padding(.bottom)
+                    .padding(.bottom)
             }.tint(.pink)
         }
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.roundedRectangle(radius: 0))
         .ignoresSafeArea(edges: .bottom)
     }
-
+    
     // MARK: - Functions
     func startDeliveryPizza() {
         let pizzaDeliveryAttributes = PizzaDeliveryAttributes(numberOfPizzas: 1, totalAmount:"$99")
-
-        let initialContentState = PizzaDeliveryAttributes.PizzaDeliveryStatus(driverName: "TIM 👨🏻‍🍳", estimatedDeliveryTime: Date()...Date().addingTimeInterval(15 * 60))
-                                                  
+        
+        let initialContentState = PizzaDeliveryAttributes.PizzaDeliveryStatus(driverName: "TIM 👨🏻‍🍳", estimatedDeliveryTime: Date()...Date().addingTimeInterval(Constants.deliveryDuration))
+        
         do {
             let deliveryActivity = try Activity<PizzaDeliveryAttributes>.request(
                 attributes: pizzaDeliveryAttributes,
                 contentState: initialContentState,
                 pushType: nil)
+            
+            rescheduleTimer()
+            refreshTasksCounter()
+            
             print("Requested a pizza delivery Live Activity \(deliveryActivity.id)")
         } catch (let error) {
             print("Error requesting pizza delivery Live Activity \(error.localizedDescription)")
         }
     }
+    
     func updateDeliveryPizza() {
         Task {
-            let updatedDeliveryStatus = PizzaDeliveryAttributes.PizzaDeliveryStatus(driverName: "TIM 👨🏻‍🍳", estimatedDeliveryTime: Date()...Date().addingTimeInterval(60 * 60))
+            let date = Date()...Date().addingTimeInterval(Constants.deliveryDuration)
+            let updatedDeliveryStatus = PizzaDeliveryAttributes.PizzaDeliveryStatus(driverName: "TIM 👨🏻‍🍳", estimatedDeliveryTime: date)
             
             for activity in Activity<PizzaDeliveryAttributes>.activities{
                 await activity.update(using: updatedDeliveryStatus)
             }
+            
+            rescheduleTimer()
+            refreshTasksCounter()
         }
     }
+    
     func stopDeliveryPizza() {
         Task {
+            cancelTimer()
+            
             for activity in Activity<PizzaDeliveryAttributes>.activities{
                 await activity.end(dismissalPolicy: .immediate)
             }
+             
+             refreshTasksCounter()
         }
     }
+    
     func showAllDeliveries() {
         Task {
             for activity in Activity<PizzaDeliveryAttributes>.activities {
                 print("Pizza delivery details: \(activity.id) -> \(activity.attributes)")
             }
+            
+            refreshTasksCounter()
         }
     }
     
-    @MainActor
-    func startPizzaAd() {
-        // Fetch image from Internet and convert it to jpegData
-        let url = URL(string: "https://img.freepik.com/premium-vector/pizza-logo-design_9845-319.jpg?w=2000")!
-        let data = try! Data(contentsOf: url)
-        let image = UIImage(data: data)!
-        let jpegData = image.jpegData(compressionQuality: 1.0)!
-        UserDefaults(suiteName: "group.io.startway.iOS16-Live-Activities")?.set(jpegData, forKey: "pizzaLogo")
-
-        let pizzaAdAttributes = PizzaAdAttributes(discount: "$100")
-        let initialContentState = PizzaAdAttributes.PizzaAdStatus(adName: "TIM 👨🏻‍🍳 's Pizza Offer", showTime: Date().addingTimeInterval(60 * 60))
-        do {
-            let deliveryActivity = try Activity<PizzaAdAttributes>.request(
-                attributes: pizzaAdAttributes,
-                contentState: initialContentState,
-                pushType: nil)
-            print("Requested a pizza ad Live Activity \(deliveryActivity.id)")
-        } catch (let error) {
-            print("Error requesting pizza ad Live Activity \(error.localizedDescription)")
-        }
+    private func cancelTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+    
+    private func rescheduleTimer() {
+        cancelTimer()
+        
+        let activity = Activity<PizzaDeliveryAttributes>.activities[0]
+        let date = activity.contentState.estimatedDeliveryTime.upperBound
+        
+        timer = Timer.scheduledTimer(withTimeInterval: date.timeIntervalSinceNow, repeats: false) { _ in
+            stopDeliveryPizza()
+       }
+    }
+ 
+    private func refreshTasksCounter() {
+        let activities = Activity<PizzaDeliveryAttributes>.activities.count
+        
+        if (activities == 0) {
+            text = "Aucune tâche"
+        } else if (activities == 1) {
+            text = "1 tâche"
+        } else {
+            text = "\(Activity<PizzaDeliveryAttributes>.activities.count) tâches"}
     }
 }
 
